@@ -1,3 +1,4 @@
+import json
 from peer import Peer
 from flask import Flask, request
 
@@ -13,13 +14,13 @@ peer = None
 
 @api.route("/server/rest/DHT/AddNode")
 def anadirNodo():
-    global peer
+    global peer, IP, PORT
     peer = Peer(IP, PORT, BUFFER, MAX_BITS)
     ip = request.args.get("ip")
     if ip:
         peer.start()
         peer.sendJoinRequest(ip, PORT)
-        return "Se ha unido el nodo a la red " + str(ip)
+        return "Se ha unido el nodo (" + peer.address + ") a la red " + str(ip)
     else:
         return "No se ha podido unir al nodo a la red. Falta la IP."
 
@@ -91,6 +92,10 @@ def imprimirSucPred():
 
 
 try:
+    with open(FICHERO) as f:
+        data = json.loads(f)
+        IP = data["ip"]
+        PORT = int(data["port"])
     api.run(host="0.0.0.0", port=8080)
 except Exception as e:
     peer.ServerSocket.close()
