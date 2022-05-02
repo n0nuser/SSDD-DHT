@@ -56,12 +56,12 @@ class Peer:
         connectionType = rDataList[0]
         if connectionType == 0:
             print("Connection with:", address[0], ":", address[1])
-            print("Join network request recevied")
+            print("Join network request received")
             self.joinNode(connection, address, rDataList)
             # self.printMenu()
         elif connectionType == 1:
             print("Connection with:", address[0], ":", address[1])
-            print("Upload/Download request recevied")
+            print("Upload/Download request received")
             self.transferFile(connection, address, rDataList)
             # self.printMenu()
         elif connectionType == 2:
@@ -202,7 +202,7 @@ class Peer:
                 pSocket.sendall(pickle.dumps([2]))  # Send ping request
                 recvPred = pickle.loads(pSocket.recv(self.buffer))
             except:
-                print("\nOffline node dedected!\nStabilizing...")
+                print("\nOffline node detected!\nStabilizing...")
                 # Search for the next succ from the F table
                 newSuccFound = False
                 value = ()
