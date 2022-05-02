@@ -1,9 +1,12 @@
-import json
+import socket
 from peer import Peer
 from flask import Flask, request
 
 # Valores por defecto si no se pasan por argumentos o fichero de configuración
-IP = "127.0.0.1"
+# IP = "127.0.0.1"
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("8.8.8.8", 80))
+IP = s.getsockname()[0]
 FICHERO = "config.json"
 PORT = 2000
 BUFFER = 4096
@@ -14,7 +17,7 @@ peer = None
 
 @api.route("/server/rest/DHT/AddNode")
 def anadirNodo():
-    global peer, IP, PORT
+    global peer, IP
     peer = Peer(IP, PORT, BUFFER, MAX_BITS)
     ip = request.args.get("ip")
     if ip:
@@ -92,10 +95,6 @@ def imprimirSucPred():
 
 
 try:
-    with open(FICHERO) as f:
-        data = json.loads(f)
-        IP = data["ip"]
-        PORT = int(data["port"])
     api.run(host="0.0.0.0", port=8080)
 except Exception as e:
     peer.ServerSocket.close()
