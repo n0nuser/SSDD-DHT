@@ -3,7 +3,6 @@ from peer import Peer
 from flask import Flask, request
 
 # Valores por defecto si no se pasan por argumentos o fichero de configuración
-# IP = "127.0.0.1"
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.connect(("8.8.8.8", 80))
 IP = s.getsockname()[0]
@@ -15,7 +14,7 @@ api = Flask(__name__)
 peer = None
 
 
-@api.route("/server/rest/DHT/AddNode")
+@api.route("/server/rest/DHT/addNode")
 def anadirNodo():
     global peer, IP
     peer = Peer(IP, PORT, BUFFER, MAX_BITS)
@@ -23,12 +22,21 @@ def anadirNodo():
     if ip:
         peer.start()
         peer.sendJoinRequest(ip, PORT)
-        return "Se ha unido el nodo (" + peer.address + ") a la red " + str(ip)
+        return (
+            "Se ha unido el nodo ("
+            + str(IP)
+            + ":"
+            + str(PORT)
+            + ") con ID "
+            + str(peer.id)
+            + " a la red "
+            + str(ip)
+        )
     else:
         return "No se ha podido unir al nodo a la red. Falta la IP."
 
 
-@api.route("/server/rest/DHT/RemoveNode")
+@api.route("/server/rest/DHT/removeNode")
 def apagarNodo():
     global peer
     if peer:
@@ -40,7 +48,7 @@ def apagarNodo():
         return "El nodo ya se encuentra apagado."
 
 
-@api.route("/server/rest/DHT/UploadContent")
+@api.route("/server/rest/DHT/uploadContent")
 def subirArchivo():
     global peer
     if peer:
@@ -59,7 +67,7 @@ def subirArchivo():
         return "No se ha iniciado el nodo."
 
 
-@api.route("/server/rest/DHT/DownloadContent")
+@api.route("/server/rest/DHT/downloadContent")
 def descargarArchivo():
     global peer
     if peer:
