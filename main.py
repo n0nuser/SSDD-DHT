@@ -11,16 +11,15 @@ PORT = 2000
 BUFFER = 4096
 MAX_BITS = 10
 api = Flask(__name__)
-peer = None
+peer = Peer(IP, PORT, BUFFER, MAX_BITS)
+peer.start()
 
 
 @api.route("/server/rest/DHT/addNode")
 def anadirNodo():
     global peer, IP
-    peer = Peer(IP, PORT, BUFFER, MAX_BITS)
     ip = request.args.get("ip")
     if ip:
-        peer.start()
         peer.sendJoinRequest(ip, PORT)
         return (
             "Se ha unido el nodo ("
@@ -42,7 +41,6 @@ def apagarNodo():
     if peer:
         peer.leaveNetwork()
         text = "Cerrando nodo con id: " + str(peer.id)
-        peer = None
         return text
     else:
         return "El nodo ya se encuentra apagado."
@@ -74,7 +72,12 @@ def descargarArchivo():
         filename = request.args.get("filename")
         if filename:
             peer.downloadFile(filename)
-            return "Archivo " + filename + " descargado."
+            text = "Archivo " + filename + " descargado.<br>"
+            with open(filename, "r") as f:
+                data = f.readlines()
+            for line in data:
+                text += line + "<br>"
+            return text
         else:
             return "Faltan párametros de URL: filename."
     else:
