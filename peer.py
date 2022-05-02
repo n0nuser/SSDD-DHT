@@ -1,3 +1,4 @@
+import contextlib
 from collections import OrderedDict
 import threading
 import hashlib
@@ -9,487 +10,468 @@ import os
 
 class Peer:
     def __init__(self, ip, port, buffer, max_bits):
-        self.filenameList = []
+        self.listaNombresFicheros = []
         self.max_bits = max_bits
-        self.max_nodes = 2**max_bits
-        self.address = (ip, port)
+        self.max_nodos = 2**max_bits
+        self.direccion = (ip, port)
         self.buffer = buffer
-        self.id = self._getHash(ip + ":" + str(port))
-        self.pred = (ip, port)  # Predecessor of this node
-        self.predID = self.id
-        self.succ = (ip, port)  # Successor to this node
-        self.succID = self.id
-        self.fingerTable = (
-            OrderedDict()
-        )  # Dictionary: key = IDs and value = (IP, port) tuple
-        # Making sockets
-        # Server socket used as listening socket for incoming connections hence threaded
-        try:
-            self.ServerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.ServerSocket.bind(self.address)
-            self.ServerSocket.listen()
-        except socket.error:
-            print("Socket not opened")
+        self.id = self.hashFichero(ip + ":" + str(port))
+        self.predecesor = (ip, port)  # Predecesor de este nodo
+        self.predecesorID = self.id
+        self.sucesor = (ip, port)  # Sucesor de este nodo
+        self.sucesorID = self.id
+        self.fingerTable = OrderedDict()  # {"ID": (IP, port)}
 
-    # Takes key string, uses SHA-1 hashing and returns a 10-bit (1024) compressed integer
-    def _getHash(self, key):
-        result = hashlib.sha1(key.encode())
-        return int(result.hexdigest(), 16) % self.max_nodes
+        # Creando los sockets
+        # Socket utilizado para escuchar los conexiones entrantes
+        try:
+            self.socketListener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socketListener.bind(self.direccion)
+            self.socketListener.listen()
+        except socket.error as e:
+            print("No se ha podido abrir el socket: ", e)
+
+    def hashFichero(self, key):
+        # Hashea la clave con SHA-1
+        resultado = hashlib.sha1(key.encode())
+        # Devuelve un entero de 10 bits comprimido
+        return int(resultado.hexdigest(), 16) % self.max_nodos
 
     def listenThread(self):
-        # Storing the IP and port in address and saving the connection and threading
+        # Recoge la petición y manda su información al hilo que la va a manejar
         while True:
-            try:
-                connection, address = self.ServerSocket.accept()
-                connection.settimeout(120)
+            with contextlib.suppress(socket.error):
+                conexion, direccion = self.socketListener.accept()
+                conexion.settimeout(120)
                 threading.Thread(
-                    target=self.connectionThread, args=(connection, address)
+                    target=self.connectionThread, args=(conexion, direccion)
                 ).start()
-            except socket.error:
-                pass  # print("Error: Connection not accepted. Try again.")
 
-    # Thread for each peer connection
-    def connectionThread(self, connection, address):
-        rDataList = pickle.loads(connection.recv(self.buffer))
-        # 5 Types of connections
-        # type 0: peer connect, type 1: client, type 2: ping, type 3: lookupID, type 4: updateSucc/Pred
-        connectionType = rDataList[0]
+    # Un hilo para cada petición de un vecino (peer)
+    def connectionThread(self, conexion, direccion):
+        requestData = pickle.loads(conexion.recv(self.buffer))
+        # 5 Tipos de conexiones:
+        # Tipo 0: conexion del peer
+        # Tipo 1: cliente
+        # Tipo 2: ping
+        # Tipo 3: búsqueda ID
+        # Tipo 4: actualizar sucesor o predecesor
+        connectionType = requestData[0]
         if connectionType == 0:
-            print("Connection with:", address[0], ":", address[1])
-            print("Join network request received")
-            self.joinNode(connection, address, rDataList)
-            # self.printMenu()
+            print("[UNIÓN A LA RED] - ", direccion[0], ":", direccion[1])
+            self.unirseNodo(conexion, requestData)
         elif connectionType == 1:
-            print("Connection with:", address[0], ":", address[1])
-            print("Upload/Download request received")
-            self.transferFile(connection, address, rDataList)
-            # self.printMenu()
+            print("[SUBIDA/BAJADA] - ", direccion[0], ":", direccion[1])
+            self.transferFile(conexion, requestData)
         elif connectionType == 2:
-            # print("Ping recevied")
-            connection.sendall(pickle.dumps(self.pred))
+            conexion.sendall(pickle.dumps(self.predecesor))
         elif connectionType == 3:
-            # print("Lookup request recevied")
-            self.lookupID(connection, address, rDataList)
+            self.busquedaID(conexion, requestData)
         elif connectionType == 4:
-            # print("Predecessor/Successor update request recevied")
-            if rDataList[1] == 1:
-                self.updateSucc(rDataList)
+            if requestData[1] == 1:
+                self.actualizarSucesor(requestData)
             else:
-                self.updatePred(rDataList)
+                self.actualizarPredecesor(requestData)
         elif connectionType == 5:
-            # print("Update Finger Table request recevied")
-            self.updateFTable()
-            connection.sendall(pickle.dumps(self.succ))
+            self.actualizarFingerTable()
+            conexion.sendall(pickle.dumps(self.sucesor))
         else:
-            print("Problem with connection type")
-        # connection.close()
+            print("Problema con el tipo de conexión")
 
-    # Deals with join network request by other node
-    def joinNode(self, connection, address, rDataList):
-        if rDataList:
-            peerIPport = rDataList[1]
-            peerID = self._getHash(peerIPport[0] + ":" + str(peerIPport[1]))
-            oldPred = self.pred
-            # Updating pred
-            self.pred = peerIPport
-            self.predID = peerID
-            # Sending new peer's pred back to it
-            sDataList = [oldPred]
-            connection.sendall(pickle.dumps(sDataList))
-            # Updating F table
+    def unirseNodo(self, conexion, requestData):
+        """
+        Gestiona la conexion de otro nodo
+        """
+        if requestData:
+            peerIPport = requestData[1]
+            peerID = self.hashFichero(peerIPport[0] + ":" + str(peerIPport[1]))
+
+            # Actualizando el predecesor
+            oldPred = self.predecesor
+            self.predecesor = peerIPport
+            self.predecesorID = peerID
+
+            # Mandando el nuevo predecesor al nodo que se acaba de unir
+            socketData = [oldPred]
+            conexion.sendall(pickle.dumps(socketData))
+            # Actualizando la fingerTable
             time.sleep(0.1)
-            self.updateFTable()
-            # Then asking other peers to update their f table as well
+            self.actualizarFingerTable()
+            # Se le pide a los demás nodos que actualizen su fingerTable
             self.updateOtherFTables()
 
-    def transferFile(self, connection, address, rDataList):
-        # Choice: 0 = download, 1 = upload
-        choice = rDataList[1]
-        filename = rDataList[2]
-        fileID = self._getHash(filename)
-        # IF client wants to download file
-        if choice == 0:
-            print("Download request for file:", filename)
-            try:
-                # First it searches its own directory (fileIDList). If not found, send does not exist
-                if filename not in self.filenameList:
-                    connection.send("NotFound".encode("utf-8"))
-                    print("File not found")
-                else:  # If file exists in its directory   # Sending DATA LIST Structure (sDataList):
-                    connection.send("Found".encode("utf-8"))
-                    self.sendFile(connection, filename)
-            except ConnectionResetError as error:
-                print(error, "\nClient disconnected\n\n")
-        # ELSE IF client wants to upload something to network
-        elif choice == 1 or choice == -1:
-            print("Receiving file:", filename)
-            fileID = self._getHash(filename)
-            print("Uploading file ID:", fileID)
-            self.filenameList.append(filename)
-            self.receiveFile(connection, filename)
-            print("Upload complete")
-            # Replicating file to successor as well
-            if choice == 1:
-                if self.address != self.succ:
-                    ######
-                    with open(filename, "r") as f:
-                        data = f.read()
-                    ######
-                    self.uploadFile(filename, data, self.succ, False)
+    def transferFile(self, conexion, requestData):
+        # Opciones: 0 = Descarga, 1 = Subida
+        opcion = requestData[1]
+        filename = requestData[2]
+        fileID = self.hashFichero(filename)
 
-    def lookupID(self, connection, address, rDataList):
-        keyID = rDataList[1]
-        sDataList = []
-        # print(self.id, keyID)
-        if self.id == keyID:  # Case 0: If keyId at self
-            sDataList = [0, self.address]
-        elif self.succID == self.id:  # Case 1: If only one node
-            sDataList = [0, self.address]
-        elif self.id > keyID:  # Case 2: Node id greater than keyId, ask pred
-            if self.predID < keyID:  # If pred is higher than key, then self is the node
-                sDataList = [0, self.address]
-            elif self.predID > self.id:
-                sDataList = [0, self.address]
-            else:  # Else send the pred back
-                sDataList = [1, self.pred]
-        else:  # Case 3: node id less than keyId USE fingertable to search
-            # IF last node before chord circle completes
-            if self.id > self.succID:
-                sDataList = [0, self.succ]
+        # Si el cliente quiere descargar el fichero
+        if opcion == 0:
+            self._bajarFichero(filename, conexion)
+        elif opcion in [1, -1]:
+            self._subirFichero(filename, conexion, opcion)
+
+    def _bajarFichero(self, filename, conexion):
+        print("Descarga del fichero: ", filename)
+        try:
+            # Primero busca el fichero en su propio directorio. Si no lo encuentra no lo manda
+            if filename not in self.listaNombresFicheros:
+                conexion.send("NoEncontrado".encode("utf-8"))
+                print("Fichero (" + filename + ") no encontrado")
+            # Si encuentra el fichero, lo manda
             else:
-                value = ()
-                for key, value in self.fingerTable.items():
-                    if key >= keyID:
-                        break
-                value = self.succ
-                sDataList = [1, value]
-        connection.sendall(pickle.dumps(sDataList))
-        # print(sDataList)
+                conexion.send("Encontrado".encode("utf-8"))
+                self.enviarFichero(conexion, filename)
+        except ConnectionResetError as error:
+            print(error, "\nCliente desconectado\n\n")
 
-    def updateSucc(self, rDataList):
-        newSucc = rDataList[2]
-        self.succ = newSucc
-        self.succID = self._getHash(newSucc[0] + ":" + str(newSucc[1]))
-        # print("Updated succ to", self.succID)
+    def _subirFichero(self, filename, conexion, opcion):
+        print("Recibiendo el fichero: ", filename)
+        fileID = self.hashFichero(filename)
+        print("Subiendo el ID del fichero:", fileID)
+        self.listaNombresFicheros.append(filename)
+        self.receiveFile(conexion, filename)
+        print("Subida completada")
+        # Replicating file to successor as well
+        if opcion == 1 and self.direccion != self.sucesor:
+            with open(filename, "r") as f:
+                data = f.read()
+            self.subirFichero(filename, data, self.sucesor, False)
 
-    def updatePred(self, rDataList):
-        newPred = rDataList[2]
-        self.pred = newPred
-        self.predID = self._getHash(newPred[0] + ":" + str(newPred[1]))
-        # print("Updated pred to", self.predID)
+    def busquedaID(self, conexion, requestData):
+        identificador = requestData[1]
+        socketData = []
+        if (
+            self.id != identificador
+            and self.sucesorID != self.id
+            and self.id <= identificador
+            and self.id > self.sucesorID
+        ):
+            socketData = [0, self.sucesor]
+
+        elif (
+            self.id != identificador
+            and self.sucesorID != self.id
+            and self.id <= identificador
+        ):
+            value = ()
+            for key, value in self.fingerTable.items():
+                if key >= identificador:
+                    break
+            value = self.sucesor
+            socketData = [1, value]
+        # Caso base: Si el identificador es el mismo que el mío
+        elif self.id == identificador or self.sucesorID == self.id:
+            socketData = [0, self.direccion]
+        # Si el predecesor es mayor que el identificador, entonces soy el nodo
+        elif self.predecesorID < identificador or self.predecesorID > self.id:
+            socketData = [0, self.direccion]
+        # Se manda el precedesor de vuelta
+        else:
+            socketData = [1, self.predecesor]
+        conexion.sendall(pickle.dumps(socketData))
+
+    def actualizarSucesor(self, requestData):
+        newSucc = requestData[2]
+        self.sucesor = newSucc
+        self.sucesorID = self.hashFichero(newSucc[0] + ":" + str(newSucc[1]))
+
+    def actualizarPredecesor(self, requestData):
+        newPred = requestData[2]
+        self.predecesor = newPred
+        self.predecesorID = self.hashFichero(newPred[0] + ":" + str(newPred[1]))
 
     def start(self):
-        # Accepting connections from other threads
+        # Se aceptan conexiones de otros hilos
         threading.Thread(target=self.listenThread, args=()).start()
-        threading.Thread(target=self.pingSucc, args=()).start()
+        threading.Thread(target=self.pingSucesor, args=()).start()
 
-        # In case of connecting to other clients
-        # while True:
-        #     print("Listening to other clients")
-        #     self.asAClientThread()
-
-    def pingSucc(self):
+    def pingSucesor(self):
         while True:
-            # Ping every 5 seconds
             time.sleep(2)
-            # If only one node, no need to ping
-            if self.address == self.succ:
+            # Si sólo hay un nodo no se hace ping
+            if self.direccion == self.sucesor:
                 continue
             try:
-                # print("Pinging succ", self.succ)
-                pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                pSocket.connect(self.succ)
-                pSocket.sendall(pickle.dumps([2]))  # Send ping request
-                recvPred = pickle.loads(pSocket.recv(self.buffer))
-            except:
-                print("\nOffline node detected!\nStabilizing...")
-                # Search for the next succ from the F table
-                newSuccFound = False
+                socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                socketPeer.connect(self.sucesor)
+                socketPeer.sendall(pickle.dumps([2]))  # Send ping request
+            except Exception:
+                print("\n¡Un nodo se ha desconectado!\nEstabilizando conexión...")
+                # Busca el siguiente sucesor en la finger table
                 value = ()
-                for key, value in self.fingerTable.items():
-                    if value[0] != self.succID:
-                        newSuccFound = True
-                        break
+                newSuccFound = next(
+                    (
+                        True
+                        for key, value in self.fingerTable.items()
+                        if value[0] != self.sucesorID
+                    ),
+                    False,
+                )
+
                 if newSuccFound:
-                    # print("new succ", value[1])
-                    self.succ = value[1]  # Update your succ to new Succ
-                    self.succID = self._getHash(self.succ[0] + ":" + str(self.succ[1]))
-                    # Inform new succ to update its pred to me now
-                    pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    pSocket.connect(self.succ)
-                    pSocket.sendall(pickle.dumps([4, 0, self.address]))
-                    pSocket.close()
-                else:  # In case Im only node left
-                    self.pred = self.address  # Predecessor of this node
-                    self.predID = self.id
-                    self.succ = self.address  # Successor to this node
-                    self.succID = self.id
-                self.updateFTable()
+                    # Actualiza el sucesor al nuevo sucesor
+                    self.sucesor = value[1]
+                    self.sucesorID = self.hashFichero(
+                        self.sucesor[0] + ":" + str(self.sucesor[1])
+                    )
+
+                    # Le digo al nuevo sucesor que actualice su predecesor a mí
+                    socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    socketPeer.connect(self.sucesor)
+                    socketPeer.sendall(pickle.dumps([4, 0, self.direccion]))
+                    socketPeer.close()
+                # Soy el único nodo
+                else:
+                    self.predecesor = (
+                        self.direccion
+                    )  # Actualiza el predecesor a mi mismo
+                    self.predecesorID = self.id
+                    self.sucesor = self.direccion  # Sucesor a este nodo
+                    self.sucesorID = self.id
+                self.actualizarFingerTable()
                 self.updateOtherFTables()
-                # self.printMenu()
 
-    # Handles all outgoing connections
-    # def asAClientThread(self):
-    #     # Printing options
-    #     self.printMenu()
-    #     userChoice = input()
-    #     if userChoice == "1":
-    #         ip = input("Enter IP to connect: ")
-    #         port = input("Enter port: ")
-    #         self.sendJoinRequest(ip, int(port))
-    #     elif userChoice == "2":
-    #         self.leaveNetwork()
-    #     elif userChoice == "3":
-    #         filename = input("Enter filename: ")
-    #         fileID = self._getHash(filename)
-    #         recvIPport = self.getSuccessor(self.succ, fileID)
-    #         self.uploadFile(filename, recvIPport, True)
-    #     elif userChoice == "4":
-    #         filename = input("Enter filename: ")
-    #         self.downloadFile(filename)
-    #     elif userChoice == "5":
-    #         self.printFTable()
-    #     elif userChoice == "6":
-    #         print(
-    #             "My ID:",
-    #             self.id,
-    #             "Predecessor:",
-    #             self.predID,
-    #             "Successor:",
-    #             self.succID,
-    #         )
-    # Reprinting Menu
-    # self.printMenu()
-
-    def sendJoinRequest(self, ip, port):
+    def unirseRed(self, ip, port):
         try:
-            recvIPPort = self.getSuccessor((ip, port), self.id)
+            recvIPPort = self.sucesorDHT((ip, port), self.id)
             peerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             peerSocket.connect(recvIPPort)
-            sDataList = [0, self.address]
+            socketData = [0, self.direccion]
 
-            peerSocket.sendall(
-                pickle.dumps(sDataList)
-            )  # Sending self peer address to add to network
-            rDataList = pickle.loads(peerSocket.recv(self.buffer))  # Receiving new pred
-            # Updating pred and succ
-            # print('before', self.predID, self.succID)
-            self.pred = rDataList[0]
-            self.predID = self._getHash(self.pred[0] + ":" + str(self.pred[1]))
-            self.succ = recvIPPort
-            self.succID = self._getHash(recvIPPort[0] + ":" + str(recvIPPort[1]))
-            # print('after', self.predID, self.succID)
-            # Tell pred to update its successor which is now me
-            sDataList = [4, 1, self.address]
-            pSocket2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            pSocket2.connect(self.pred)
-            pSocket2.sendall(pickle.dumps(sDataList))
-            pSocket2.close()
+            # Manda la direccion del nodo que se unirá a la red
+            peerSocket.sendall(pickle.dumps(socketData))
+            # Recibe al nuevo predecesor
+            requestData = pickle.loads(peerSocket.recv(self.buffer))
+            # Actualiza el precesor y el sucesor
+            self.predecesor = requestData[0]
+            self.predecesorID = self.hashFichero(
+                self.predecesor[0] + ":" + str(self.predecesor[1])
+            )
+            self.sucesor = recvIPPort
+            self.sucesorID = self.hashFichero(recvIPPort[0] + ":" + str(recvIPPort[1]))
+            # Le dice al predecesor que actualice su sucesor a mí
+            socketData = [4, 1, self.direccion]
+            socketPeer2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            socketPeer2.connect(self.predecesor)
+            socketPeer2.sendall(pickle.dumps(socketData))
+            socketPeer2.close()
             peerSocket.close()
         except socket.error:
-            print("Socket error. Recheck IP/Port.")
+            print("Error en el socket. Comprueba la IP o el puerto.")
 
-    def leaveNetwork(self):
-        # First inform my succ to update its pred
-        pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        pSocket.connect(self.succ)
-        pSocket.sendall(pickle.dumps([4, 0, self.pred]))
-        pSocket.close()
-        # Then inform my pred to update its succ
-        pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        pSocket.connect(self.pred)
-        pSocket.sendall(pickle.dumps([4, 1, self.succ]))
-        pSocket.close()
-        print("I had files:", self.filenameList)
-        # And also replicating its files to succ as a client
-        print("Replicating files to other nodes before leaving")
-        for filename in self.filenameList:
-            pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            pSocket.connect(self.succ)
-            sDataList = [1, 1, filename]
-            pSocket.sendall(pickle.dumps(sDataList))
+    def abandonarRed(self):
+        # Le digo a mi sucesor que actualice su predecesor
+        socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        socketPeer.connect(self.sucesor)
+        socketPeer.sendall(pickle.dumps([4, 0, self.predecesor]))
+        socketPeer.close()
+
+        # Le digo a mi predecesor que actualice su sucesor
+        socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        socketPeer.connect(self.predecesor)
+        socketPeer.sendall(pickle.dumps([4, 1, self.sucesor]))
+        socketPeer.close()
+
+        print("Mis ficheros:", self.listaNombresFicheros)
+        print("Replicando ficheros al resto de nodos de la red antes de abandonarla...")
+        for filename in self.listaNombresFicheros:
+            socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            socketPeer.connect(self.sucesor)
+            socketData = [1, 1, filename]
+            socketPeer.sendall(pickle.dumps(socketData))
             with open(filename, "rb") as file:
-                # Getting back confirmation
-                pSocket.recv(self.buffer)
-                self.sendFile(pSocket, filename)
-                pSocket.close()
-                print("File replicated")
-            pSocket.close()
+                # Se consigue la confirmación de que el fichero se ha replicado
+                socketPeer.recv(self.buffer)
+                self.enviarFichero(socketPeer, filename)
+                socketPeer.close()
+                print("Fichero (", filename, ") replicado.")
+            socketPeer.close()
 
-        self.updateOtherFTables()  # Telling others to update their f tables
+        # Le digo a los demás nodos que actualicen su fingerTable
+        self.updateOtherFTables()
 
-        self.pred = self.address  # Chaning the pointers to default
-        self.predID = self.id
-        self.succ = self.address
-        self.succID = self.id
+        # Se resetean las variables a por defecto
+        self.predecesor = self.direccion
+        self.sucesor = self.direccion
+        self.predecesorID = self.id
+        self.sucesorID = self.id
         self.fingerTable.clear()
-        print(self.address, "has left the network")
+        print(self.direccion, "ha abandonado la red.")
 
-    def uploadFile(self, filename, contenido, recvIPport, replicate):
-        print("Uploading file", filename)
-        # If not found send lookup request to get peer to upload file
-        sDataList = [1]
+    def subirFichero(self, filename, contenido, recvIPport, replicate):
+        print("Subiendo el fichero", filename)
+        # Si no se encuentra se manda una petición de búsqueda para hacer que un vecino suba el fichero
+        socketData = [1]
         if replicate:
-            sDataList.append(1)
+            socketData.append(1)
         else:
-            sDataList.append(-1)
+            socketData.append(-1)
         try:
-            # Before doing anything check if you have the file or not
-            # file = open(filename, "rb")
-            # file.close()
-            with open(filename, "w") as file:
-                print(contenido)
-                file.write(contenido)
-            sDataList = sDataList + [filename]
-            cSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            cSocket.connect(recvIPport)
-            cSocket.sendall(pickle.dumps(sDataList))
-            self.sendFile(cSocket, filename)
-            cSocket.close()
-            print("File uploaded")
-        except IOError:
-            print("File not in directory")
-        except socket.error:
-            print("Error in uploading file")
+            self.mandarFichero(filename, contenido, socketData, recvIPport)
 
-    def downloadFile(self, filename):
-        print("Downloading file", filename)
-        fileID = self._getHash(filename)
-        # First finding node with the file
-        recvIPport = self.getSuccessor(self.succ, fileID)
-        sDataList = [1, 0, filename]
+        except IOError:
+            print("El fichero no se encuentra en el directorio.")
+        except socket.error:
+            print("Error al subir el fichero.")
+
+    def mandarFichero(self, filename, contenido, socketData, recvIPport):
+        # Antes de hacer nada comprueba si existe el fichero o no
+        with open(filename, "w") as file:
+            print(contenido)
+            file.write(contenido)
+        socketData += [filename]
         cSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         cSocket.connect(recvIPport)
-        cSocket.sendall(pickle.dumps(sDataList))
-        # Receiving confirmation if file found or not
+        cSocket.sendall(pickle.dumps(socketData))
+        self.enviarFichero(cSocket, filename)
+        cSocket.close()
+        print("Fichero subido.")
+
+    def descargarFichero(self, filename):
+        print("Descargando el fichero ", filename)
+        fileID = self.hashFichero(filename)
+
+        # Primero busca el nodo que tiene el fichero
+        recvIPport = self.sucesorDHT(self.sucesor, fileID)
+        socketData = [1, 0, filename]
+        cSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        cSocket.connect(recvIPport)
+        cSocket.sendall(pickle.dumps(socketData))
+
+        # Recibe confirmación si el fichero se ha encontrado
         fileData = cSocket.recv(self.buffer)
-        if fileData == b"NotFound":
-            print("File not found:", filename)
+        if fileData == b"NoEncontrado":
+            print("El fichero ", filename, " no ha sido encontrado.")
         else:
-            print("Receiving file:", filename)
+            print("Recibiendo el fichero ", filename)
             self.receiveFile(cSocket, filename)
 
-    def getSuccessor(self, address, keyID):
-        rDataList = [1, address]  # Deafult values to run while loop
-        recvIPPort = rDataList[1]
-        while rDataList[0] == 1:
+    def sucesorDHT(self, direccion, identificador):
+        # Valores por defecto
+        requestData = [1, direccion]
+        recvIPPort = requestData[1]
+
+        while requestData[0] == 1:
             peerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
                 peerSocket.connect(recvIPPort)
-                # Send continous lookup requests until required peer ID
-                sDataList = [3, keyID]
-                peerSocket.sendall(pickle.dumps(sDataList))
-                # Do continous lookup until you get your postion (0)
-                rDataList = pickle.loads(peerSocket.recv(self.buffer))
-                recvIPPort = rDataList[1]
+                # Manda una petición de búsqueda continua hasta que se encuentre el nodo requerido
+                socketData = [3, identificador]
+                peerSocket.sendall(pickle.dumps(socketData))
+                # Hace una búsqueda continua hasta que se encuentre el nodo requerido
+                requestData = pickle.loads(peerSocket.recv(self.buffer))
+                recvIPPort = requestData[1]
                 peerSocket.close()
             except socket.error:
-                print("Connection denied while getting Successor")
-        # print(rDataList)
+                print("Conexión denegada mientras se buscaba el sucesor.")
         return recvIPPort
 
-    def updateFTable(self):
+    def actualizarFingerTable(self):
+        """
+        Actualiza la finger table.
+        """
         for i in range(self.max_bits):
-            entryId = (self.id + (2**i)) % self.max_nodes
-            # If only one node in network
-            if self.succ == self.address:
-                self.fingerTable[entryId] = (self.id, self.address)
+            entradaID = (self.id + (2**i)) % self.max_nodos
+            # Si sólo hay un nodo en la red
+            if self.sucesor == self.direccion:
+                self.fingerTable[entradaID] = (self.id, self.direccion)
                 continue
-            # If multiple nodes in network, we find succ for each entryID
-            recvIPPort = self.getSuccessor(self.succ, entryId)
-            recvId = self._getHash(recvIPPort[0] + ":" + str(recvIPPort[1]))
-            self.fingerTable[entryId] = (recvId, recvIPPort)
-        # self.printFTable()
+
+            # Si hay más de un nodo en la red, buscamos el sucesor para cada uno
+            recvIPPort = self.sucesorDHT(self.sucesor, entradaID)
+            recvId = self.hashFichero(recvIPPort[0] + ":" + str(recvIPPort[1]))
+            self.fingerTable[entradaID] = (recvId, recvIPPort)
 
     def updateOtherFTables(self):
-        here = self.succ
-        while True:
-            if here == self.address:
-                break
-            pSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        """
+        Actualiza las finger tables de los demás nodos de la red.
+        """
+        here = self.sucesor
+        while here != self.direccion:
+            socketPeer = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             try:
-                pSocket.connect(here)  # Connecting to server
-                pSocket.sendall(pickle.dumps([5]))
-                here = pickle.loads(pSocket.recv(self.buffer))
-                pSocket.close()
-                if here == self.succ:
+                socketPeer.connect(here)  # Connecting to server
+                socketPeer.sendall(pickle.dumps([5]))
+                here = pickle.loads(socketPeer.recv(self.buffer))
+                socketPeer.close()
+                if here == self.sucesor:
                     break
             except socket.error:
-                print("Connection denied")
+                print(
+                    "Conexión denegada mientras se actualizaba la tabla de finger table."
+                )
 
-    def sendFile(self, connection, filename):
-        print("Sending file:", filename)
+    def enviarFichero(self, conexion, filename):
+        """
+        Envia un fichero al socket.
+        """
+        print("Enviando el fichero ", filename)
         try:
-            # Reading file data size
+            # Se lee el tamaño del fichero
             with open(filename, "rb") as file:
-                data = file.read()
-                print("File size:", len(data))
-                fileSize = len(data)
-        except:
-            print("File not found")
+                print("Tamaño del fichero:", len(file.read()))
+        except Exception:
+            print("Fichero no encontrado.")
         try:
             with open(filename, "rb") as file:
-                # connection.send(pickle.dumps(fileSize))
                 while True:
                     fileData = file.read(self.buffer)
                     time.sleep(0.001)
-                    # print(fileData)
                     if not fileData:
                         break
-                    connection.sendall(fileData)
-                print("File sent")
-        except:
-            print("File not found in directory")
+                    conexion.sendall(fileData)
+                print("Fichero (", filename, ") enviado.")
+        except Exception:
+            print("Fichero no encontrado en el directorio.")
 
-    def receiveFile(self, connection, filename):
-        # Receiving file in parts
-        # If file already in directory
-        fileAlready = False
-        try:
+    def receiveFile(self, conexion, filename):
+        """
+        Recibe un fichero en partes a través de un socket.
+        """
+
+        ficheroExiste = False  # Si el fichero ya existe en el directorio
+        with contextlib.suppress(FileNotFoundError):
             with open(filename, "rb") as file:
                 data = file.read()
                 size = len(data)
                 if size == 0:
-                    print("Retransmission request sent")
-                    fileAlready = False
+                    print("Se ha vuelto a pedir el fichero.")
+                    ficheroExiste = False
                 else:
-                    print("File already present")
-                    fileAlready = True
+                    print("El fichero ya existe.")
+                    ficheroExiste = True
                 return
-        except FileNotFoundError:
-            pass
-        # receiving file size
-        # fileSize = pickle.loads(connection.recv(self.buffer))
-        # print("File Size", fileSize)
-        if not fileAlready:
+        if not ficheroExiste:
             totalData = b""
             recvSize = 0
             try:
                 with open(filename, "wb") as file:
                     while True:
-                        fileData = connection.recv(self.buffer)
-                        # print(fileData)
+                        fileData = conexion.recv(self.buffer)
                         recvSize += len(fileData)
-                        # print(recvSize)
                         if not fileData:
                             break
                         totalData += fileData
                     file.write(totalData)
             except ConnectionResetError:
-                print("Data transfer interupted\nWaiting for system to stabilize")
-                print("Trying again in 10 seconds")
-                time.sleep(5)
-                os.remove(filename)
-                time.sleep(5)
-                self.downloadFile(filename)
-                # connection.send(pickle.dumps(True))
+                self.connectionReset(filename)
 
-    def printMenu(self):
-        print("\n1. Join Network\n2. Leave Network\n3. Upload File\n4. Download File")
-        print("5. Print Finger Table\n6. Print my predecessor and successor")
+    def connectionReset(self, filename):
+        print(
+            "Se ha interrumpido la conexión.\nEsperando al sistema para estabilizarse."
+        )
+        print("Se volverá a intentar en 10 segundos.")
+        time.sleep(5)
+        os.remove(filename)
+        time.sleep(5)
+        self.descargarFichero(filename)
 
-    def printFTable(self):
+    def mostrarFingerTable(self):
         text = ""
         for key, value in self.fingerTable.items():
-            text = text + "KeyID:" + str(key) + " - Value: " + str(value) + "<br>"
+            text = (
+                text + "identificador:" + str(key) + " - Value: " + str(value) + "<br>"
+            )
         return text

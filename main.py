@@ -20,7 +20,7 @@ def anadirNodo():
     global peer, IP
     ip = request.args.get("ip")
     if ip:
-        peer.sendJoinRequest(ip, PORT)
+        peer.unirseRed(ip, PORT)
         return (
             "Se ha unido el nodo ("
             + str(IP)
@@ -39,7 +39,7 @@ def anadirNodo():
 def apagarNodo():
     global peer
     if peer:
-        peer.leaveNetwork()
+        peer.abandonarRed()
         text = "Cerrando nodo con id: " + str(peer.id)
         return text
     else:
@@ -53,9 +53,9 @@ def subirArchivo():
         filename = request.args.get("filename")
         data = request.args.get("data")
         if filename and data:
-            fileID = peer._getHash(filename)
-            recvIPport = peer.getSuccessor(peer.succ, fileID)
-            peer.uploadFile(filename, data, recvIPport, True)
+            fileID = peer.hashFichero(filename)
+            recvIPport = peer.sucesorDHT(peer.sucesor, fileID)
+            peer.subirFichero(filename, data, recvIPport, True)
             return (
                 "Se ha subido el archivo " + str(filename) + " con el id " + str(fileID)
             )
@@ -71,7 +71,7 @@ def descargarArchivo():
     if peer:
         filename = request.args.get("filename")
         if filename:
-            peer.downloadFile(filename)
+            peer.descargarFichero(filename)
             text = "Archivo " + filename + " descargado.<br>"
             with open(filename, "r") as f:
                 data = f.readlines()
@@ -88,7 +88,7 @@ def descargarArchivo():
 def imprimirFingerTable():
     global peer
     if peer:
-        return peer.printFTable()
+        return peer.mostrarFingerTable()
     else:
         return "No se ha iniciado el nodo."
 
@@ -98,8 +98,8 @@ def imprimirSucPred():
     global peer
     if peer:
         text = "ID: " + str(peer.id) + "<br>"
-        text = text + "Suc: " + str(peer.succID) + "<br>"
-        text = text + "Pred: " + str(peer.predID) + "<br>"
+        text = text + "Suc: " + str(peer.sucesorID) + "<br>"
+        text = text + "Pred: " + str(peer.predecesorID) + "<br>"
         return text
     else:
         return "No se ha iniciado el nodo."
@@ -108,4 +108,4 @@ def imprimirSucPred():
 try:
     api.run(host="0.0.0.0", port=8080)
 except Exception as e:
-    peer.ServerSocket.close()
+    peer.socketListener.close()
