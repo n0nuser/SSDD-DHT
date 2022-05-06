@@ -16,17 +16,27 @@ Otro aspecto clave sobre Chord es que es capaz de autoestabilizarse, es decir, s
 
 Dado que Chord es un sistema descentralizado no hay un fichero para el servidor y otro diferente para el cliente, nuestro fichero `peer.py` ya actua como cliente y servidor a nivel del nodo al mismo tiempo.
 
-Para que nuestro programa funcione correctamente debemos indicarle los argumentos por línea de comando de la siguiente forma:
-
-```
-poetry run python3.5 main.py
-```
-
 Este programa ha sido implementado a partir del [código de Nouman Abbasi](https://github.com/MNoumanAbbasi/Chord-DHT-for-File-Sharing). Por otro lado, se ha implementado un servicio API REST con Flask para visualizar mediante peticiones HTTP su funcionamiento, y facilitar la integración con múltiples clientes como puedan ser los buscadores (Firefox, Chrome), u otros programables mediante bots como puedan ser Telegram, Discord, Slack...
 
 ## Cómo utilizar el programa
 
-Lo primero que tenemos que hacer para poder ejecutar el programa, es lanzar el comando especificado más abajo para tener un nodo en nuestro equipo (un nodo por equipo con puerto 2000).
+### Poetry
+
+Si queremos utilizar un entorno virtual para las dependencias podemos utilzar Poetry.
+
+Lo primero que tenemos que hacer para poder ejecutar el programa, es crear el entorno virtual para instalar las dependencias en él, y que así no se instalen en nuestro equipo directamente. Para ello primero debemos seleccionar la versión de Python en el que queremos crear el entorno, en este caso la 3.5 pues es la que hay en las aulas:
+
+```
+poetry env use python3.5
+```
+
+Acto seguido deberemos crear el entorno virtual e instalar las dependencias:
+
+```
+poetry install
+```
+
+Y ya por último podremos lanzar el comando especificado más abajo para tener un nodo funcionando en nuestro equipo (un nodo por equipo con puerto 2000).
 
 Entonces para hacer la prueba lanzaríamos en 3 terminales de 3 máquinas distintas el siguiente comando:
 
@@ -35,6 +45,20 @@ poetry run python3.5 main.py
 ```
 
 Esto lanzaría una instancia de Flask y se podrían hacer peticiones hacia la IP del equipo al puerto 8080.
+
+### Sin Poetry
+
+Si queremos instalar las dependencias directamente en nuestro equipo podemos lanzar el siguiente comando:
+
+```
+pip3 install -r requirements.txt
+```
+
+Para ejecutarlo se haría con Python de forma normal:
+
+```
+python3.5 main.py
+```
 
 ## Endpoints
 
