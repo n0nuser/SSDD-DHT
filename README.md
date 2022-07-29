@@ -1,5 +1,16 @@
 # SSDD - Chord DHT (Tabla Hash Distribuida)
 
+# Nota Final : 7
+
+## Parcipantes:
+
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/AnOrdinaryUsser"><img width="100px;" src="https://avatars2.githubusercontent.com/u/61872281?s=460&u=e276002ebcb7a49338dac7ffb561cf968d6c0ee4&v=4"></td>
+    <td align="center"><a href="https://github.com/n0nuser"><img width="100px;" src="https://avatars3.githubusercontent.com/u/32982175?s=460&u=ce93410c9c5e0f3ffa17321e16ee2f2b8879ca6f&v=4"></td>
+  </tr>
+</table>
+
 ## Un poco sobre CHORD
 
 Chord es un protocolo y algoritmo para una tabla hash distribuida punto a punto que se puede utilizar para compartir archivos entre pares (p2p). El algoritmo Chord es el encargado de distribuir objetos en un red dinámica y es el quien implementa un protocolo para encontrar esos objetos en la red. Además la ubicación de los datos se implementa en la parte superior de Chord al asociar una clave con cada elemento de datos y almacenar el par clave/elemento de datos en el nodo al que asigna la clave.
